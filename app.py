@@ -2,6 +2,17 @@ import streamlit as st
 import requests
 import pandas as pd
 import re
+import os
+from dotenv import load_dotenv
+
+# --- Load environment variables ---
+load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", None)
+
+# --- Optional: Only import openai if key exists ---
+if OPENAI_API_KEY:
+    import openai
+    openai.api_key = OPENAI_API_KEY
 
 # --- Streamlit config ---
 st.set_page_config(page_title="PaperPal", layout="wide")
@@ -38,15 +49,39 @@ def fetch_papers(query: str, limit: int = 50):
     except Exception:
         return []
 
+# --- Text highlighting ---
 def highlight_keywords(text: str, keyword: str) -> str:
     pattern = re.compile(re.escape(keyword), re.IGNORECASE)
     return pattern.sub(f"**{keyword}**", text)
 
-def summarize_abstract(abstract: str) -> str:
+# --- Fallback summarizer ---
+def simple_summarize(abstract: str) -> str:
     if not abstract:
         return "No abstract available."
     sentences = re.split(r'(?<=[.?!])\s+', abstract.strip())
     return " ".join(sentences[:2])
+
+# --- AI summarizer with fallback ---
+def summarize_abstract(abstract: str) -> str:
+    if not summarize or not abstract:
+        return "No abstract available."
+
+    if OPENAI_API_KEY:
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": "Summarize this academic abstract in 2 concise lines."},
+                    {"role": "user", "content": abstract}
+                ],
+                temperature=0.3,
+                max_tokens=100
+            )
+            return response['choices'][0]['message']['content'].strip()
+        except Exception:
+            return simple_summarize(abstract)
+    else:
+        return simple_summarize(abstract)
 
 # --- Filter papers ---
 papers = fetch_papers(keyword)
@@ -73,12 +108,12 @@ if not filtered:
     st.warning("No papers found with the given filters.")
     st.stop()
 
+# --- Display results ---
 df = pd.DataFrame([{
     "Title": f"[{p['title']}]({p['url']})",
     "Year": p.get("year", ""),
     "Venue": p.get("venue", ""),
-    "Abstract": highlight_keywords(p.get("abstract", "No abstract available."), keyword)
-    if not summarize else summarize_abstract(p.get("abstract", ""))
+    "Abstract": highlight_keywords(summarize_abstract(p.get("abstract", "")), keyword)
 } for p in filtered])
 
 st.markdown("### Search Results")
